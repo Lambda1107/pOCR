@@ -1,0 +1,17 @@
+[project]
+name = "pocr"
+version = "0.1.0"
+description = "macOS menu bar OCR app powered by PaddleOCR-VL-1.6"
+requires-python = ">=3.13"
+dependencies = [
+    "paddleocr[doc-parser]",
+    "paddlepaddle==3.2.1",
+]
+
+[[tool.uv.index]]
+url = "https://www.paddlepaddle.org.cn/packages/stable/cpu/"
+explicit = true
+name = "paddle"
+
+[tool.uv.sources]
+paddlepaddle = { index = "paddle" }

@@ -1,0 +1,8 @@
+build/
+__pycache__/
+*.py[oc]
+*.egg-info
+.venv
+dist/
+AppIcon.icns
+*.iconset/
