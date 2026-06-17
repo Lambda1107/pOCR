@@ -10,7 +10,7 @@ SOURCES = Sources/pOCRApp.swift Sources/OCRService.swift Sources/SettingsView.sw
 
 all: $(APP_BUNDLE)
 
-$(APP_BUNDLE): $(SOURCES) AppIcon.icns .venv
+$(APP_BUNDLE): $(SOURCES) AppIcon.icns
 	@echo "Building $(APP_NAME)..."
 	@mkdir -p $(MACOS_DIR)
 	@mkdir -p $(RESOURCES_DIR)
@@ -21,14 +21,9 @@ $(APP_BUNDLE): $(SOURCES) AppIcon.icns .venv
 	# Copy Icon
 	cp AppIcon.icns $(RESOURCES_DIR)/AppIcon.icns
 
-	# Bundle Python venv (site-packages only, no broken symlinks)
-	@echo "Bundling Python venv..."
-	@mkdir -p $(RESOURCES_DIR)/venv
-	@cp -R .venv/lib $(RESOURCES_DIR)/venv/lib
-	@rm -rf $(RESOURCES_DIR)/venv/lib/python*/site-packages/__pycache__ 2>/dev/null || true
-	# Bundle wrapper script
-	@cp scripts/run_paddleocr.sh $(RESOURCES_DIR)/run_paddleocr.sh
-	@chmod +x $(RESOURCES_DIR)/run_paddleocr.sh
+	# Bundle project files for auto-init (pyproject.toml + uv.lock)
+	@cp pyproject.toml $(RESOURCES_DIR)/pyproject.toml
+	@cp uv.lock $(RESOURCES_DIR)/uv.lock
 
 	# Create Info.plist
 	@echo '<?xml version="1.0" encoding="UTF-8"?>' > $(CONTENTS_DIR)/Info.plist
