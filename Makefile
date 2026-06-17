@@ -16,7 +16,7 @@ $(APP_BUNDLE): $(SOURCES) AppIcon.icns
 	@mkdir -p $(RESOURCES_DIR)
 
 	# Compile Swift sources
-	swiftc $(SOURCES) -o $(MACOS_DIR)/$(APP_NAME) -target arm64-apple-macosx13.0
+	swiftc $(SOURCES) -o $(MACOS_DIR)/$(APP_NAME) -target arm64-apple-macosx13.0 -framework ServiceManagement
 
 	# Copy Icon
 	cp AppIcon.icns $(RESOURCES_DIR)/AppIcon.icns

@@ -1,5 +1,6 @@
 import SwiftUI
 import Carbon
+import ServiceManagement
 
 struct SettingsView: View {
     var body: some View {
@@ -69,6 +70,8 @@ struct GeneralSettingsView: View {
 
     @State private var isRecording = false
     @State private var displayString = "Cmd+Shift+A (Default)"
+    @State private var launchAtLogin = false
+    @State private var launchAtLoginStatus: String = ""
 
     var body: some View {
         Form {
@@ -82,6 +85,32 @@ struct GeneralSettingsView: View {
                     Text("Device: CPU")
                         .font(.caption)
                         .foregroundColor(.secondary)
+                }
+            }
+
+            Section(header: Text("Startup")) {
+                Toggle("Launch at Login", isOn: $launchAtLogin)
+                    .toggleStyle(.switch)
+                    .onChange(of: launchAtLogin) { newValue in
+                        do {
+                            if newValue {
+                                try SMAppService.mainApp.register()
+                                launchAtLoginStatus = "Will launch at login"
+                            } else {
+                                try SMAppService.mainApp.unregister()
+                                launchAtLoginStatus = ""
+                            }
+                        } catch {
+                            launchAtLogin = !newValue
+                            launchAtLoginStatus = "Failed: \(error.localizedDescription)"
+                            Logger.shared.log("LaunchAtLogin error: \(error.localizedDescription)")
+                        }
+                    }
+
+                if !launchAtLoginStatus.isEmpty {
+                    Text(launchAtLoginStatus)
+                        .font(.caption)
+                        .foregroundColor(launchAtLogin == true ? .green : .red)
                 }
             }
 
@@ -115,6 +144,7 @@ struct GeneralSettingsView: View {
             }
             .onAppear {
                 NSApp.activate(ignoringOtherApps: true)
+                launchAtLogin = SMAppService.mainApp.status == .enabled
                 updateDisplayString()
             }
 
