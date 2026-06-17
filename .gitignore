@@ -4,5 +4,3 @@ __pycache__/
 *.egg-info
 .venv
 dist/
-AppIcon.icns
-*.iconset/

@@ -53,8 +53,6 @@ $(APP_BUNDLE): $(SOURCES) AppIcon.icns
 	@echo "Build complete: $(APP_BUNDLE)"
 
 AppIcon.icns:
-	# Generate iconset from a simple PNG
-	python3 scripts/gen_icons.py
 	iconutil -c icns $(APP_NAME).iconset -o AppIcon.icns
 
 clean:
