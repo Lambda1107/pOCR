@@ -4,7 +4,7 @@ APP_BUNDLE = $(BUILD_DIR)/$(APP_NAME).app
 CONTENTS_DIR = $(APP_BUNDLE)/Contents
 MACOS_DIR = $(CONTENTS_DIR)/MacOS
 RESOURCES_DIR = $(CONTENTS_DIR)/Resources
-SOURCES = Sources/pOCRApp.swift Sources/OCRService.swift Sources/SettingsView.swift Sources/HotKeyManager.swift Sources/StatusBarController.swift Sources/Logger.swift Sources/KeychainManager.swift
+SOURCES = Sources/pOCRApp.swift Sources/OCRService.swift Sources/SettingsView.swift Sources/HotKeyManager.swift Sources/StatusBarController.swift Sources/Logger.swift Sources/CredentialsManager.swift
 
 .PHONY: all clean run package
 
@@ -16,7 +16,7 @@ $(APP_BUNDLE): $(SOURCES) AppIcon.icns
 	@mkdir -p $(RESOURCES_DIR)
 
 	# Compile Swift sources
-	swiftc $(SOURCES) -o $(MACOS_DIR)/$(APP_NAME) -target arm64-apple-macosx13.0 -framework ServiceManagement -framework Security
+	swiftc $(SOURCES) -o $(MACOS_DIR)/$(APP_NAME) -target arm64-apple-macosx13.0 -framework ServiceManagement
 
 	# Copy Icon
 	cp AppIcon.icns $(RESOURCES_DIR)/AppIcon.icns
@@ -24,6 +24,10 @@ $(APP_BUNDLE): $(SOURCES) AppIcon.icns
 	# Bundle project files for auto-init (pyproject.toml + uv.lock)
 	@cp pyproject.toml $(RESOURCES_DIR)/pyproject.toml
 	@cp uv.lock $(RESOURCES_DIR)/uv.lock
+
+	# Bundle Python scripts
+	@cp Resources/ocr_local.py $(RESOURCES_DIR)/ocr_local.py
+	@cp Resources/ocr_api.py $(RESOURCES_DIR)/ocr_api.py
 
 	# Create Info.plist
 	@echo '<?xml version="1.0" encoding="UTF-8"?>' > $(CONTENTS_DIR)/Info.plist

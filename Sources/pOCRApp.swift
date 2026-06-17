@@ -31,6 +31,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, HotKeyDelegate {
             "ocr_mode": "local",
             "api_model": "PaddleOCR-VL-1.6",
             "siliconflow_model": "deepseek-ai/DeepSeek-OCR",
+            "local_pipeline_version": "v1.6",
+            "local_use_layout_detection": true,
+            "local_use_chart_recognition": true,
+            "local_prettify_markdown": true,
+            "api_use_layout_detection": true,
+            "api_use_chart_recognition": true,
+            "api_prettify_markdown": true,
         ]
         UserDefaults.standard.register(defaults: defaults)
     }

@@ -28,12 +28,16 @@ class OCRService: ObservableObject {
     @Published var lastError: String?
 
     private let pocrDir: URL
-    private let venvPaddle: URL
+    private let pythonBin: URL
+    private let ocrLocalScript: URL
+    private let ocrApiScript: URL
 
     private init() {
         let home = FileManager.default.homeDirectoryForCurrentUser
         pocrDir = home.appendingPathComponent(".pocr")
-        venvPaddle = pocrDir.appendingPathComponent(".venv/bin/paddleocr")
+        pythonBin = pocrDir.appendingPathComponent(".venv/bin/python3")
+        ocrLocalScript = pocrDir.appendingPathComponent("ocr_local.py")
+        ocrApiScript = pocrDir.appendingPathComponent("ocr_api.py")
     }
 
     // MARK: - Public API
@@ -47,6 +51,8 @@ class OCRService: ObservableObject {
             return
         }
 
+        let paddedImage = padImage(image, horizontal: 30) ?? image
+
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("pocr_\(UUID().uuidString)")
         do {
@@ -58,7 +64,7 @@ class OCRService: ObservableObject {
         }
 
         let imageURL = tempDir.appendingPathComponent("clipboard.png")
-        guard saveImage(image, to: imageURL) else {
+        guard saveImage(paddedImage, to: imageURL) else {
             Logger.shared.log("Error: Failed to save image")
             try? FileManager.default.removeItem(at: tempDir)
             completion(.failure(.failedToConvertImage))
@@ -79,6 +85,13 @@ class OCRService: ObservableObject {
     func testAPIConnection(token: String, model: String, completion: @escaping (String?) -> Void) {
         Logger.shared.log("Testing API connection with model: \(model)")
 
+        do {
+            try ensureVenv()
+        } catch {
+            completion("Failed to init: \(error.localizedDescription)")
+            return
+        }
+
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("pocr_test_\(UUID().uuidString)")
         do {
@@ -96,20 +109,24 @@ class OCRService: ObservableObject {
             return
         }
 
+        let resultURL = tempDir.appendingPathComponent("test_result.json")
+
         let process = Process()
-        process.executableURL = venvPaddle
+        process.executableURL = pythonBin
         process.arguments = [
-            "api",
-            "--model_type", "doc_parsing",
-            "--model", model,
-            "--file_path", imageURL.path,
+            ocrApiScript.path,
+            "--image", imageURL.path,
+            "--output", resultURL.path,
             "--token", token,
-            "--poll_timeout", "30",
+            "--model", model,
+            "--poll-timeout", "30",
+            "--use-layout-detection", "false",
+            "--use-chart-recognition", "false",
+            "--prettify-markdown", "false",
         ]
 
-        let outPipe = Pipe()
         let errPipe = Pipe()
-        process.standardOutput = outPipe
+        process.standardOutput = Pipe()
         process.standardError = errPipe
 
         var errBuf = ""
@@ -126,7 +143,7 @@ class OCRService: ObservableObject {
         }
 
         do {
-            Logger.shared.log("Running: paddleocr api --model \(model)")
+            Logger.shared.log("Running: \(pythonBin.lastPathComponent) ocr_api.py --model \(model)")
             try process.run()
             process.waitUntilExit()
             errPipe.fileHandleForReading.readabilityHandler = nil
@@ -142,10 +159,6 @@ class OCRService: ObservableObject {
             Logger.shared.log("API test connection successful")
             completion(nil)
         } else {
-            let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
-            if let outStr = String(data: outData, encoding: .utf8), !outStr.isEmpty {
-                Logger.shared.log("[api] stdout: \(outStr)")
-            }
             let detail = errBuf.trimmingCharacters(in: .whitespacesAndNewlines)
             let msg = detail.isEmpty ? "exit code \(process.terminationStatus)" : detail
             Logger.shared.log("API test connection failed: \(msg)")
@@ -264,7 +277,7 @@ class OCRService: ObservableObject {
             }
 
             do {
-                try self?.runPaddleOCR(imageURL: imageURL, tempDir: tempDir, completion: completion)
+                try self?.runLocalOCR(imageURL: imageURL, tempDir: tempDir, completion: completion)
             } catch {
                 Logger.shared.log("Error running OCR: \(error.localizedDescription)")
                 completion(.failure(.ocrError(error.localizedDescription)))
@@ -275,13 +288,8 @@ class OCRService: ObservableObject {
     private func ensureVenv() throws {
         guard !isInitializing else { return }
 
-        if FileManager.default.fileExists(atPath: venvPaddle.path) {
-            return
-        }
-
         isInitializing = true
         defer { isInitializing = false }
-        Logger.shared.log("Initializing Python venv in \(pocrDir.path)...")
 
         try FileManager.default.createDirectory(at: pocrDir, withIntermediateDirectories: true)
 
@@ -297,17 +305,34 @@ class OCRService: ObservableObject {
             }
         }
 
-        Logger.shared.log("Running uv sync (this may take a while on first run)...")
-        try runProcess(
-            executable: URL(fileURLWithPath: "/usr/bin/env"),
-            args: ["uv", "sync", "--directory", pocrDir.path, "--frozen"],
-            workingDir: pocrDir
-        )
-        Logger.shared.log("Venv initialized successfully")
+        for script in ["ocr_local.py", "ocr_api.py"] {
+            let src = resources.appendingPathComponent(script)
+            let dst = pocrDir.appendingPathComponent(script)
+            if FileManager.default.fileExists(atPath: src.path) {
+                if FileManager.default.fileExists(atPath: dst.path) {
+                    try FileManager.default.removeItem(at: dst)
+                }
+                try FileManager.default.copyItem(at: src, to: dst)
+            }
+        }
+
+        if !FileManager.default.fileExists(atPath: pythonBin.path) {
+            Logger.shared.log("Running uv sync (this may take a while on first run)...")
+            try runProcess(
+                executable: URL(fileURLWithPath: "/usr/bin/env"),
+                args: ["uv", "sync", "--directory", pocrDir.path, "--frozen"],
+                workingDir: pocrDir
+            )
+        }
+        Logger.shared.log("Venv and scripts ready")
     }
 
-    private func runPaddleOCR(imageURL: URL, tempDir: URL, completion: @escaping (Result<String, OCRError>) -> Void) throws {
-        let outputPipe = Pipe()
+    private func runLocalOCR(imageURL: URL, tempDir: URL, completion: @escaping (Result<String, OCRError>) -> Void) throws {
+        let useLayoutDetection = UserDefaults.standard.bool(forKey: "local_use_layout_detection")
+        let useChartRecognition = UserDefaults.standard.bool(forKey: "local_use_chart_recognition")
+        let formatBlockContent = UserDefaults.standard.bool(forKey: "local_prettify_markdown")
+        let pipelineVersion = UserDefaults.standard.string(forKey: "local_pipeline_version") ?? "v1.6"
+
         let errorPipe = Pipe()
 
         var stderrBuf = ""
@@ -323,17 +348,20 @@ class OCRService: ObservableObject {
             }
         }
 
-        Logger.shared.log("Running paddleocr...")
+        Logger.shared.log("Running paddleocr via Python API...")
         try runProcess(
-            executable: venvPaddle,
+            executable: pythonBin,
             args: [
-                "doc_parser",
-                "-i", imageURL.path,
+                ocrLocalScript.path,
+                "--image", imageURL.path,
+                "--output-dir", tempDir.path,
                 "--device", "cpu",
-                "--save_path", tempDir.path,
+                "--pipeline-version", pipelineVersion,
+                "--use-layout-detection", useLayoutDetection ? "true" : "false",
+                "--use-chart-recognition", useChartRecognition ? "true" : "false",
+                "--format-block-content", formatBlockContent ? "true" : "false",
             ],
             workingDir: tempDir,
-            outputPipe: outputPipe,
             errorPipe: errorPipe
         )
         errorPipe.fileHandleForReading.readabilityHandler = nil
@@ -341,10 +369,6 @@ class OCRService: ObservableObject {
         let resultURL = tempDir.appendingPathComponent("clipboard_res.json")
         guard let data = try? Data(contentsOf: resultURL) else {
             Logger.shared.log("Error: Result file not found at \(resultURL.path)")
-            let outData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-            if let outStr = String(data: outData, encoding: .utf8) {
-                Logger.shared.log("stdout: \(outStr)")
-            }
             completion(.failure(.invalidResponse))
             return
         }
@@ -355,13 +379,24 @@ class OCRService: ObservableObject {
     // MARK: - API OCR
 
     private func performOCRApi(imageURL: URL, tempDir: URL, completion: @escaping (Result<String, OCRError>) -> Void) {
-        guard let token = KeychainManager.load(key: "api_token"), !token.isEmpty else {
+        do {
+            try ensureVenv()
+        } catch {
+            Logger.shared.log("Error initializing venv: \(error.localizedDescription)")
+            completion(.failure(.ocrError("Failed to init: \(error.localizedDescription)")))
+            return
+        }
+
+        guard let token = CredentialsManager.load(key: "api_token"), !token.isEmpty else {
             Logger.shared.log("Error: API token not configured")
             completion(.failure(.ocrError("API token not set. Configure it in Settings.")))
             return
         }
 
         let model = UserDefaults.standard.string(forKey: "api_model") ?? "PaddleOCR-VL-1.6"
+        let useLayoutDetection = UserDefaults.standard.bool(forKey: "api_use_layout_detection")
+        let useChartRecognition = UserDefaults.standard.bool(forKey: "api_use_chart_recognition")
+        let prettifyMarkdown = UserDefaults.standard.bool(forKey: "api_prettify_markdown")
         let resultURL = tempDir.appendingPathComponent("api_result.json")
 
         self.isProcessing = true
@@ -372,15 +407,17 @@ class OCRService: ObservableObject {
             }
 
             let process = Process()
-            process.executableURL = self.venvPaddle
+            process.executableURL = self.pythonBin
             process.arguments = [
-                "api",
-                "--model_type", "doc_parsing",
-                "--model", model,
-                "--file_path", imageURL.path,
-                "--token", token,
-                "--poll_timeout", "120",
+                self.ocrApiScript.path,
+                "--image", imageURL.path,
                 "--output", resultURL.path,
+                "--token", token,
+                "--model", model,
+                "--poll-timeout", "120",
+                "--use-layout-detection", useLayoutDetection ? "true" : "false",
+                "--use-chart-recognition", useChartRecognition ? "true" : "false",
+                "--prettify-markdown", prettifyMarkdown ? "true" : "false",
             ]
 
             let outPipe = Pipe()
@@ -402,7 +439,7 @@ class OCRService: ObservableObject {
             }
 
             do {
-                Logger.shared.log("Submitting API OCR task...")
+                Logger.shared.log("Submitting API OCR task via Python SDK...")
                 try process.run()
                 process.waitUntilExit()
                 errPipe.fileHandleForReading.readabilityHandler = nil
@@ -413,6 +450,14 @@ class OCRService: ObservableObject {
             }
 
             Logger.shared.log("API OCR exit code: \(process.terminationStatus)")
+
+            guard process.terminationStatus == 0 else {
+                let detail = errBuf.trimmingCharacters(in: .whitespacesAndNewlines)
+                let msg = detail.isEmpty ? "API request failed (exit code \(process.terminationStatus))" : detail
+                Logger.shared.log("API error: \(msg)")
+                completion(.failure(.ocrError(msg)))
+                return
+            }
 
             guard let data = try? Data(contentsOf: resultURL) else {
                 Logger.shared.log("Error: API result file not found")
@@ -467,7 +512,7 @@ class OCRService: ObservableObject {
     // MARK: - SiliconFlow OCR
 
     private func performOCRSiliconFlow(imageURL: URL, tempDir: URL, completion: @escaping (Result<String, OCRError>) -> Void) {
-        guard let token = KeychainManager.load(key: "siliconflow_token"), !token.isEmpty else {
+        guard let token = CredentialsManager.load(key: "siliconflow_token"), !token.isEmpty else {
             Logger.shared.log("Error: SiliconFlow API token not configured")
             completion(.failure(.ocrError("SiliconFlow API token not set. Configure it in Settings.")))
             return
@@ -680,20 +725,48 @@ class OCRService: ObservableObject {
     }
 
     private func saveImage(_ image: NSImage, to url: URL) -> Bool {
+        Logger.shared.log("NSImage size: \(image.size.width)x\(image.size.height) pts, reps: \(image.representations.count)")
+
         guard let tiffData = image.tiffRepresentation,
               let bitmap = NSBitmapImageRep(data: tiffData) else {
             return false
         }
+
+        let pxW = bitmap.pixelsWide
+        let pxH = bitmap.pixelsHigh
+        Logger.shared.log("Bitmap size: \(pxW)x\(pxH) px")
+
         guard let pngData = bitmap.representation(using: .png, properties: [:]) else {
             return false
         }
         do {
             try pngData.write(to: url)
+            Logger.shared.log("Saved PNG: \(pngData.count) bytes")
             return true
         } catch {
             Logger.shared.log("Error writing image: \(error.localizedDescription)")
             return false
         }
+    }
+
+    private func padImage(_ image: NSImage, horizontal padding: CGFloat) -> NSImage? {
+        guard let tiffData = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiffData) else {
+            return nil
+        }
+
+        let newW = Int(CGFloat(bitmap.pixelsWide) + padding * 2)
+        let newH = bitmap.pixelsHigh
+        let newImage = NSImage(size: NSSize(width: CGFloat(newW), height: CGFloat(newH)))
+
+        newImage.lockFocus()
+        NSColor.white.setFill()
+        NSRect(origin: .zero, size: newImage.size).fill()
+        bitmap.draw(in: NSRect(x: padding, y: 0, width: CGFloat(bitmap.pixelsWide), height: CGFloat(bitmap.pixelsHigh)),
+                    from: .zero, operation: .sourceOver, fraction: 1.0, respectFlipped: false, hints: nil)
+        newImage.unlockFocus()
+
+        return newImage
     }
 
     private func createTestImage() -> NSImage {

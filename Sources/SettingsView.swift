@@ -16,7 +16,7 @@ struct SettingsView: View {
                 }
         }
         .padding()
-        .frame(width: 500, height: 420)
+        .frame(width: 500, height: 480)
     }
 }
 
@@ -70,6 +70,15 @@ struct GeneralSettingsView: View {
     @AppStorage("api_model") private var apiModel: String = "PaddleOCR-VL-1.6"
     @AppStorage("siliconflow_model") private var siliconflowModel: String = "deepseek-ai/DeepSeek-OCR"
 
+    @AppStorage("local_pipeline_version") private var localPipelineVersion: String = "v1.6"
+    @AppStorage("local_use_layout_detection") private var localUseLayoutDetection: Bool = true
+    @AppStorage("local_use_chart_recognition") private var localUseChartRecognition: Bool = true
+    @AppStorage("local_prettify_markdown") private var localPrettifyMarkdown: Bool = true
+
+    @AppStorage("api_use_layout_detection") private var apiUseLayoutDetection: Bool = true
+    @AppStorage("api_use_chart_recognition") private var apiUseChartRecognition: Bool = true
+    @AppStorage("api_prettify_markdown") private var apiPrettifyMarkdown: Bool = true
+
     @AppStorage("HotKey_KeyCode") private var hotKeyKeyCode: Int = 0
     @AppStorage("HotKey_Modifiers") private var hotKeyModifiers: Int = 0
 
@@ -87,13 +96,14 @@ struct GeneralSettingsView: View {
     @State private var isTestingSF: Bool = false
 
     private let apiModels = ["PaddleOCR-VL-1.6", "PaddleOCR-VL-1.5", "PaddleOCR-VL"]
+    private let localPipelineVersions = ["v1.6", "v1.5", "v1"]
     private let siliconflowModels = ["deepseek-ai/DeepSeek-OCR", "deepseek-ai/DeepSeek-V4-Flash", "PaddlePaddle/PaddleOCR-VL-1.5"]
 
     var body: some View {
         Form {
             Section(header: Text("OCR Engine")) {
                 Picker("Mode", selection: $ocrMode) {
-                    Text("Local (PaddleOCR-VL-1.6)").tag("local")
+                    Text("Local (PaddleOCR-VL)").tag("local")
                     Text("Cloud API (PaddleOCR)").tag("api")
                     Text("SiliconFlow API").tag("siliconflow")
                 }
@@ -103,7 +113,7 @@ struct GeneralSettingsView: View {
                     SecureField("API Token", text: $apiToken)
                         .textFieldStyle(RoundedBorderTextFieldStyle())
                         .onChange(of: apiToken) { newValue in
-                            try? KeychainManager.save(key: "api_token", value: newValue)
+                            CredentialsManager.save(key: "api_token", value: newValue)
                         }
 
                     Picker("Model", selection: $apiModel) {
@@ -111,6 +121,10 @@ struct GeneralSettingsView: View {
                             Text(model).tag(model)
                         }
                     }
+
+                    Toggle("Layout Detection", isOn: $apiUseLayoutDetection)
+                    Toggle("Chart Recognition", isOn: $apiUseChartRecognition)
+                    Toggle("Prettify Markdown", isOn: $apiPrettifyMarkdown)
 
                     HStack {
                         Button(action: testConnection) {
@@ -134,7 +148,7 @@ struct GeneralSettingsView: View {
                     SecureField("API Token", text: $siliconflowToken)
                         .textFieldStyle(RoundedBorderTextFieldStyle())
                         .onChange(of: siliconflowToken) { newValue in
-                            try? KeychainManager.save(key: "siliconflow_token", value: newValue)
+                            CredentialsManager.save(key: "siliconflow_token", value: newValue)
                         }
 
                     Picker("Model", selection: $siliconflowModel) {
@@ -162,10 +176,18 @@ struct GeneralSettingsView: View {
                         }
                     }
                 } else {
+                    Picker("Pipeline", selection: $localPipelineVersion) {
+                        ForEach(localPipelineVersions, id: \.self) { v in
+                            Text(v).tag(v)
+                        }
+                    }
+
+                    Toggle("Layout Detection", isOn: $localUseLayoutDetection)
+                    Toggle("Chart Recognition", isOn: $localUseChartRecognition)
+                    Toggle("Prettify Markdown", isOn: $localPrettifyMarkdown)
+
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("PaddleOCR-VL-1.6 (Local)")
-                            .font(.body)
-                        Text("Model: PaddleOCR-VL-1.6-0.9B · Device: CPU")
+                        Text("Runs locally on CPU")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -229,8 +251,8 @@ struct GeneralSettingsView: View {
             .onAppear {
                 NSApp.activate(ignoringOtherApps: true)
                 launchAtLogin = SMAppService.mainApp.status == .enabled
-                apiToken = KeychainManager.load(key: "api_token") ?? ""
-                siliconflowToken = KeychainManager.load(key: "siliconflow_token") ?? ""
+                apiToken = CredentialsManager.load(key: "api_token") ?? ""
+                siliconflowToken = CredentialsManager.load(key: "siliconflow_token") ?? ""
                 updateDisplayString()
             }
 
