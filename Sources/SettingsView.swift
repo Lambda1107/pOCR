@@ -35,6 +35,7 @@ struct LogsView: View {
                 ScrollView {
                     Text(logger.logs)
                         .font(.system(.body, design: .monospaced))
+                        .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .id("bottom")
                 }

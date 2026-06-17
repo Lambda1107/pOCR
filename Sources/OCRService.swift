@@ -95,33 +95,39 @@ class OCRService: ObservableObject {
         }
 
         let process = Process()
-        process.currentDirectoryURL = tempDir
-        process.executableURL = URL(fileURLWithPath: "/bin/bash")
-        process.arguments = ["-c", [
-            "export PADDLEOCR_ACCESS_TOKEN=\(shellEscape(token))",
-            "exec \(shellEscape(venvPaddle.path)) api",
-            "--model_type doc_parsing",
-            "--model \(shellEscape(model))",
-            "--file_path \(shellEscape(imageURL.path))",
-            "--poll_timeout 30",
-        ].joined(separator: " ")]
+        process.executableURL = venvPaddle
+        process.arguments = [
+            "api",
+            "--model_type", "doc_parsing",
+            "--model", model,
+            "--file_path", imageURL.path,
+            "--token", token,
+            "--poll_timeout", "30",
+        ]
 
-        let errorPipe = Pipe()
-        process.standardError = errorPipe
+        let outPipe = Pipe()
+        let errPipe = Pipe()
+        process.standardOutput = outPipe
+        process.standardError = errPipe
 
         var errBuf = ""
-        errorPipe.fileHandleForReading.readabilityHandler = { handle in
+        errPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             guard !data.isEmpty else { return }
             if let chunk = String(data: data, encoding: .utf8) {
                 errBuf += chunk
+                for line in errBuf.components(separatedBy: "\n").dropLast() {
+                    Logger.shared.log("[api] \(line)")
+                }
+                errBuf = errBuf.components(separatedBy: "\n").last ?? ""
             }
         }
 
         do {
+            Logger.shared.log("Running: paddleocr api --model \(model)")
             try process.run()
             process.waitUntilExit()
-            errorPipe.fileHandleForReading.readabilityHandler = nil
+            errPipe.fileHandleForReading.readabilityHandler = nil
         } catch {
             try? FileManager.default.removeItem(at: tempDir)
             completion("Failed to run: \(error.localizedDescription)")
@@ -131,10 +137,17 @@ class OCRService: ObservableObject {
         try? FileManager.default.removeItem(at: tempDir)
 
         if process.terminationStatus == 0 {
+            Logger.shared.log("API test connection successful")
             completion(nil)
         } else {
+            let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+            if let outStr = String(data: outData, encoding: .utf8), !outStr.isEmpty {
+                Logger.shared.log("[api] stdout: \(outStr)")
+            }
             let detail = errBuf.trimmingCharacters(in: .whitespacesAndNewlines)
-            completion(detail.isEmpty ? "exit code \(process.terminationStatus)" : detail)
+            let msg = detail.isEmpty ? "exit code \(process.terminationStatus)" : detail
+            Logger.shared.log("API test connection failed: \(msg)")
+            completion(msg)
         }
     }
 
@@ -258,28 +271,30 @@ class OCRService: ObservableObject {
 
         self.isProcessing = true
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
             defer {
-                DispatchQueue.main.async { self?.isProcessing = false }
+                DispatchQueue.main.async { self.isProcessing = false }
             }
 
             let process = Process()
-            process.currentDirectoryURL = tempDir
-            process.executableURL = URL(fileURLWithPath: "/bin/bash")
-            process.arguments = ["-c", [
-                "export PADDLEOCR_ACCESS_TOKEN=\(self?.shellEscape(token) ?? token)",
-                "exec \(self?.shellEscape(self?.venvPaddle.path ?? "") ?? "") api",
-                "--model_type doc_parsing",
-                "--model \(self?.shellEscape(model) ?? model)",
-                "--file_path \(self?.shellEscape(imageURL.path) ?? imageURL.path)",
-                "--poll_timeout 120",
-                "--output \(self?.shellEscape(resultURL.path) ?? resultURL.path)",
-            ].joined(separator: " ")]
+            process.executableURL = self.venvPaddle
+            process.arguments = [
+                "api",
+                "--model_type", "doc_parsing",
+                "--model", model,
+                "--file_path", imageURL.path,
+                "--token", token,
+                "--poll_timeout", "120",
+                "--output", resultURL.path,
+            ]
 
-            let errorPipe = Pipe()
-            process.standardError = errorPipe
+            let outPipe = Pipe()
+            let errPipe = Pipe()
+            process.standardOutput = outPipe
+            process.standardError = errPipe
 
             var errBuf = ""
-            errorPipe.fileHandleForReading.readabilityHandler = { handle in
+            errPipe.fileHandleForReading.readabilityHandler = { handle in
                 let data = handle.availableData
                 guard !data.isEmpty else { return }
                 if let chunk = String(data: data, encoding: .utf8) {
@@ -295,7 +310,7 @@ class OCRService: ObservableObject {
                 Logger.shared.log("Submitting API OCR task...")
                 try process.run()
                 process.waitUntilExit()
-                errorPipe.fileHandleForReading.readabilityHandler = nil
+                errPipe.fileHandleForReading.readabilityHandler = nil
             } catch {
                 Logger.shared.log("Error running API OCR: \(error.localizedDescription)")
                 completion(.failure(.ocrError(error.localizedDescription)))
@@ -341,7 +356,7 @@ class OCRService: ObservableObject {
                     let pasteboard = NSPasteboard.general
                     pasteboard.clearContents()
                     pasteboard.setString(combined, forType: .string)
-                    self?.lastResult = combined
+                    self.lastResult = combined
                 }
 
                 completion(.success(combined))
@@ -464,7 +479,4 @@ class OCRService: ObservableObject {
         return image
     }
 
-    private func shellEscape(_ str: String) -> String {
-        str.replacingOccurrences(of: "'", with: "'\\''")
-    }
 }
