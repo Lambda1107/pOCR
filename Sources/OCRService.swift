@@ -44,12 +44,20 @@ class OCRService: ObservableObject {
 
         Logger.shared.log("Image saved to \(imageURL.path)")
 
-        guard let projectRoot = resolveProjectRoot() else {
-            Logger.shared.log("Error: Could not find project root (pyproject.toml not found)")
-            completion(.failure(.ocrError("Project root not found. Make sure pyproject.toml exists in the project directory.")))
+        guard let resourcesURL = Bundle.main.resourceURL else {
+            Logger.shared.log("Error: Could not find app Resources")
+            completion(.failure(.ocrError("App bundle is corrupt (no Resources)")))
             return
         }
-        Logger.shared.log("Project root: \(projectRoot)")
+
+        let scriptURL = resourcesURL.appendingPathComponent("run_paddleocr.sh")
+        guard FileManager.default.fileExists(atPath: scriptURL.path) else {
+            Logger.shared.log("Error: run_paddleocr.sh not found at \(scriptURL.path)")
+            completion(.failure(.ocrError("OCR engine not bundled. Reinstall the app.")))
+            return
+        }
+
+        Logger.shared.log("Script path: \(scriptURL.path)")
 
         self.isProcessing = true
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -58,10 +66,10 @@ class OCRService: ObservableObject {
             }
 
             let process = Process()
-            process.currentDirectoryURL = URL(fileURLWithPath: projectRoot)
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.executableURL = URL(fileURLWithPath: "/bin/bash")
             process.arguments = [
-                "uv", "run", "paddleocr", "doc_parser",
+                scriptURL.path,
+                "doc_parser",
                 "-i", imageURL.path,
                 "--device", "cpu",
                 "--save_path", tempDir.path,
@@ -165,15 +173,4 @@ class OCRService: ObservableObject {
         }
     }
 
-    private func resolveProjectRoot() -> String? {
-        var url = Bundle.main.bundleURL
-        for _ in 0..<15 {
-            let testPath = url.appendingPathComponent("pyproject.toml")
-            if FileManager.default.fileExists(atPath: testPath.path) {
-                return url.path
-            }
-            url.deleteLastPathComponent()
-        }
-        return nil
-    }
 }
