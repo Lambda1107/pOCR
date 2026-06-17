@@ -30,6 +30,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, HotKeyDelegate {
         let defaults: [String: Any] = [
             "ocr_mode": "local",
             "api_model": "PaddleOCR-VL-1.6",
+            "siliconflow_model": "deepseek-ai/DeepSeek-OCR",
         ]
         UserDefaults.standard.register(defaults: defaults)
     }

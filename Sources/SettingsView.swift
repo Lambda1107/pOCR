@@ -68,6 +68,7 @@ struct LogsView: View {
 struct GeneralSettingsView: View {
     @AppStorage("ocr_mode") private var ocrMode: String = "local"
     @AppStorage("api_model") private var apiModel: String = "PaddleOCR-VL-1.6"
+    @AppStorage("siliconflow_model") private var siliconflowModel: String = "deepseek-ai/DeepSeek-OCR"
 
     @AppStorage("HotKey_KeyCode") private var hotKeyKeyCode: Int = 0
     @AppStorage("HotKey_Modifiers") private var hotKeyModifiers: Int = 0
@@ -81,14 +82,20 @@ struct GeneralSettingsView: View {
     @State private var testStatus: String = ""
     @State private var isTesting: Bool = false
 
+    @State private var siliconflowToken: String = ""
+    @State private var sfTestStatus: String = ""
+    @State private var isTestingSF: Bool = false
+
     private let apiModels = ["PaddleOCR-VL-1.6", "PaddleOCR-VL-1.5", "PaddleOCR-VL"]
+    private let siliconflowModels = ["deepseek-ai/DeepSeek-OCR", "deepseek-ai/DeepSeek-V4-Flash", "PaddlePaddle/PaddleOCR-VL-1.5"]
 
     var body: some View {
         Form {
             Section(header: Text("OCR Engine")) {
                 Picker("Mode", selection: $ocrMode) {
                     Text("Local (PaddleOCR-VL-1.6)").tag("local")
-                    Text("Cloud API").tag("api")
+                    Text("Cloud API (PaddleOCR)").tag("api")
+                    Text("SiliconFlow API").tag("siliconflow")
                 }
                 .pickerStyle(.radioGroup)
 
@@ -120,6 +127,37 @@ struct GeneralSettingsView: View {
                             Text(testStatus)
                                 .font(.caption)
                                 .foregroundColor(testStatus.contains("Success") ? .green : .red)
+                                .lineLimit(2)
+                        }
+                    }
+                } else if ocrMode == "siliconflow" {
+                    SecureField("API Token", text: $siliconflowToken)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .onChange(of: siliconflowToken) { newValue in
+                            try? KeychainManager.save(key: "siliconflow_token", value: newValue)
+                        }
+
+                    Picker("Model", selection: $siliconflowModel) {
+                        ForEach(siliconflowModels, id: \.self) { model in
+                            Text(model).tag(model)
+                        }
+                    }
+
+                    HStack {
+                        Button(action: testSFConnection) {
+                            if isTestingSF {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Text("Test Connection")
+                            }
+                        }
+                        .disabled(isTestingSF || siliconflowToken.isEmpty)
+
+                        if !sfTestStatus.isEmpty {
+                            Text(sfTestStatus)
+                                .font(.caption)
+                                .foregroundColor(sfTestStatus.contains("Success") ? .green : .red)
                                 .lineLimit(2)
                         }
                     }
@@ -192,6 +230,7 @@ struct GeneralSettingsView: View {
                 NSApp.activate(ignoringOtherApps: true)
                 launchAtLogin = SMAppService.mainApp.status == .enabled
                 apiToken = KeychainManager.load(key: "api_token") ?? ""
+                siliconflowToken = KeychainManager.load(key: "siliconflow_token") ?? ""
                 updateDisplayString()
             }
 
@@ -223,6 +262,23 @@ struct GeneralSettingsView: View {
                     testStatus = "Failed: \(error)"
                 } else {
                     testStatus = "Success!"
+                }
+            }
+        }
+    }
+
+    private func testSFConnection() {
+        isTestingSF = true
+        sfTestStatus = "Testing..."
+        Logger.shared.log("Testing SiliconFlow connection...")
+
+        OCRService.shared.testSiliconFlowConnection(token: siliconflowToken, model: siliconflowModel) { error in
+            DispatchQueue.main.async {
+                isTestingSF = false
+                if let error = error {
+                    sfTestStatus = "Failed: \(error)"
+                } else {
+                    sfTestStatus = "Success!"
                 }
             }
         }

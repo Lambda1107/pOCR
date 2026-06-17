@@ -69,6 +69,8 @@ class OCRService: ObservableObject {
 
         if mode == "api" {
             performOCRApi(imageURL: imageURL, tempDir: tempDir, completion: completion)
+        } else if mode == "siliconflow" {
+            performOCRSiliconFlow(imageURL: imageURL, tempDir: tempDir, completion: completion)
         } else {
             performLocalOCR(imageURL: imageURL, tempDir: tempDir, completion: completion)
         }
@@ -149,6 +151,99 @@ class OCRService: ObservableObject {
             Logger.shared.log("API test connection failed: \(msg)")
             completion(msg)
         }
+    }
+
+    func testSiliconFlowConnection(token: String, model: String, completion: @escaping (String?) -> Void) {
+        Logger.shared.log("Testing SiliconFlow connection with model: \(model)")
+
+        let testImage = createTestImage()
+        guard let tiffData = testImage.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiffData),
+              let pngData = bitmap.representation(using: .png, properties: [:]) else {
+            completion("Failed to create test image")
+            return
+        }
+
+        let base64Image = pngData.base64EncodedString()
+        let dataURI = "data:image/png;base64,\(base64Image)"
+
+        let url = URL(string: "https://api.siliconflow.cn/v1/chat/completions")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 30
+
+        let body: [String: Any] = [
+            "model": model,
+            "messages": [
+                [
+                    "role": "user",
+                    "content": [
+                        ["type": "image_url", "image_url": ["url": dataURI]],
+                        ["type": "text", "text": "Extract text."],
+                    ],
+                ]
+            ],
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        let task = URLSession.shared.dataTask(with: request) { data, response, error in
+            if let error = error {
+                completion(error.localizedDescription)
+                return
+            }
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                completion("Invalid response")
+                return
+            }
+
+            guard httpResponse.statusCode == 200 else {
+                var msg = "HTTP \(httpResponse.statusCode)"
+                if let data = data, let str = String(data: data, encoding: .utf8) {
+                    msg += ": \(str.prefix(200))"
+                }
+                completion(msg)
+                return
+            }
+
+            guard let data = data else {
+                completion("Empty response")
+                return
+            }
+
+            do {
+                guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    completion("Invalid JSON response")
+                    return
+                }
+
+                if let errorObj = json["error"] as? [String: Any] {
+                    completion(errorObj["message"] as? String ?? "API error")
+                    return
+                }
+
+                if let code = json["code"] as? Int, code != 0 {
+                    completion(json["message"] as? String ?? "API error (code \(code))")
+                    return
+                }
+
+                guard let choices = json["choices"] as? [[String: Any]],
+                      let first = choices.first,
+                      let message = first["message"] as? [String: Any],
+                      message["content"] as? String != nil else {
+                    completion("Unexpected response format")
+                    return
+                }
+
+                Logger.shared.log("SiliconFlow connection test successful")
+                completion(nil)
+            } catch {
+                completion("Parse error: \(error.localizedDescription)")
+            }
+        }
+        task.resume()
     }
 
     // MARK: - Local OCR
@@ -362,6 +457,142 @@ class OCRService: ObservableObject {
                 completion(.success(combined))
             } catch {
                 Logger.shared.log("Error parsing API response: \(error.localizedDescription)")
+                completion(.failure(.invalidResponse))
+            }
+
+            try? FileManager.default.removeItem(at: tempDir)
+        }
+    }
+
+    // MARK: - SiliconFlow OCR
+
+    private func performOCRSiliconFlow(imageURL: URL, tempDir: URL, completion: @escaping (Result<String, OCRError>) -> Void) {
+        guard let token = KeychainManager.load(key: "siliconflow_token"), !token.isEmpty else {
+            Logger.shared.log("Error: SiliconFlow API token not configured")
+            completion(.failure(.ocrError("SiliconFlow API token not set. Configure it in Settings.")))
+            return
+        }
+
+        let model = UserDefaults.standard.string(forKey: "siliconflow_model") ?? "deepseek-ai/DeepSeek-OCR"
+
+        guard let imageData = try? Data(contentsOf: imageURL) else {
+            Logger.shared.log("Error: Failed to read image data")
+            completion(.failure(.failedToConvertImage))
+            return
+        }
+
+        let base64Image = imageData.base64EncodedString()
+        let dataURI = "data:image/png;base64,\(base64Image)"
+
+        self.isProcessing = true
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            defer {
+                DispatchQueue.main.async { self.isProcessing = false }
+            }
+
+            let url = URL(string: "https://api.siliconflow.cn/v1/chat/completions")!
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.timeoutInterval = 120
+
+            let body: [String: Any] = [
+                "model": model,
+                "messages": [
+                    [
+                        "role": "user",
+                        "content": [
+                            ["type": "image_url", "image_url": ["url": dataURI]],
+                            ["type": "text", "text": "Please extract all text from this image."],
+                        ],
+                    ]
+                ],
+            ]
+
+            do {
+                request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            } catch {
+                Logger.shared.log("Error serializing request: \(error.localizedDescription)")
+                completion(.failure(.ocrError("Failed to create request")))
+                return
+            }
+
+            Logger.shared.log("Sending request to SiliconFlow API...")
+
+            let semaphore = DispatchSemaphore(value: 0)
+            var responseData: Data?
+            var responseError: Error?
+
+            let task = URLSession.shared.dataTask(with: request) { data, _, error in
+                responseData = data
+                responseError = error
+                semaphore.signal()
+            }
+            task.resume()
+            semaphore.wait()
+
+            if let error = responseError {
+                Logger.shared.log("SiliconFlow API error: \(error.localizedDescription)")
+                completion(.failure(.ocrError(error.localizedDescription)))
+                return
+            }
+
+            guard let data = responseData else {
+                Logger.shared.log("Error: No response from SiliconFlow API")
+                completion(.failure(.invalidResponse))
+                return
+            }
+
+            do {
+                guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    Logger.shared.log("Error: Invalid JSON from SiliconFlow API")
+                    if let raw = String(data: data, encoding: .utf8) {
+                        Logger.shared.log("Raw response: \(raw.prefix(500))")
+                    }
+                    completion(.failure(.invalidResponse))
+                    return
+                }
+
+                if let errorObj = json["error"] as? [String: Any] {
+                    let msg = errorObj["message"] as? String ?? "Unknown error"
+                    Logger.shared.log("SiliconFlow API error: \(msg)")
+                    completion(.failure(.ocrError(msg)))
+                    return
+                }
+
+                if let code = json["code"] as? Int, code != 0 {
+                    let msg = json["message"] as? String ?? "Unknown error"
+                    Logger.shared.log("SiliconFlow API error: \(msg)")
+                    completion(.failure(.ocrError(msg)))
+                    return
+                }
+
+                guard let choices = json["choices"] as? [[String: Any]],
+                      let first = choices.first,
+                      let message = first["message"] as? [String: Any],
+                      let content = message["content"] as? String else {
+                    Logger.shared.log("Error: Unexpected response format")
+                    if let raw = String(data: data, encoding: .utf8) {
+                        Logger.shared.log("Raw response: \(raw.prefix(500))")
+                    }
+                    completion(.failure(.invalidResponse))
+                    return
+                }
+
+                Logger.shared.log("SiliconFlow OCR Success. Chars: \(content.count)")
+
+                DispatchQueue.main.async {
+                    let pasteboard = NSPasteboard.general
+                    pasteboard.clearContents()
+                    pasteboard.setString(content, forType: .string)
+                    self.lastResult = content
+                }
+
+                completion(.success(content))
+            } catch {
+                Logger.shared.log("Error parsing SiliconFlow response: \(error.localizedDescription)")
                 completion(.failure(.invalidResponse))
             }
 
