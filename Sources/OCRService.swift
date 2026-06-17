@@ -68,11 +68,27 @@ class OCRService: ObservableObject {
             process.standardOutput = outputPipe
             process.standardError = errorPipe
 
+            // Capture stderr asynchronously and feed to Logger
+            var stderrBuf = ""
+            errorPipe.fileHandleForReading.readabilityHandler = { handle in
+                let data = handle.availableData
+                guard !data.isEmpty else { return }
+                if let chunk = String(data: data, encoding: .utf8) {
+                    stderrBuf += chunk
+                    for line in stderrBuf.components(separatedBy: "\n").dropLast() {
+                        Logger.shared.log("[paddleocr] \(line)")
+                    }
+                    stderrBuf = stderrBuf.components(separatedBy: "\n").last ?? ""
+                }
+            }
+
             do {
                 Logger.shared.log("Running paddleocr...")
                 try process.run()
                 process.waitUntilExit()
+                errorPipe.fileHandleForReading.readabilityHandler = nil
             } catch {
+                errorPipe.fileHandleForReading.readabilityHandler = nil
                 Logger.shared.log("Error running paddleocr: \(error.localizedDescription)")
                 completion(.failure(.ocrError(error.localizedDescription)))
                 return
@@ -80,12 +96,6 @@ class OCRService: ObservableObject {
 
             let status = process.terminationStatus
             Logger.shared.log("paddleocr exit code: \(status)")
-
-            if status != 0 {
-                let errData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-                let errStr = String(data: errData, encoding: .utf8) ?? "Unknown error"
-                Logger.shared.log("paddleocr stderr: \(errStr)")
-            }
 
             let resultURL = tempDir.appendingPathComponent("clipboard_res.json")
             guard let data = try? Data(contentsOf: resultURL) else {
