@@ -44,7 +44,11 @@ class OCRService: ObservableObject {
 
         Logger.shared.log("Image saved to \(imageURL.path)")
 
-        let projectRoot = resolveProjectRoot()
+        guard let projectRoot = resolveProjectRoot() else {
+            Logger.shared.log("Error: Could not find project root (pyproject.toml not found)")
+            completion(.failure(.ocrError("Project root not found. Make sure pyproject.toml exists in the project directory.")))
+            return
+        }
         Logger.shared.log("Project root: \(projectRoot)")
 
         self.isProcessing = true
@@ -161,9 +165,15 @@ class OCRService: ObservableObject {
         }
     }
 
-    private func resolveProjectRoot() -> String {
-        let bundlePath = Bundle.main.bundlePath as NSString
-        let buildDir = bundlePath.deletingLastPathComponent
-        return (buildDir as NSString).deletingLastPathComponent
+    private func resolveProjectRoot() -> String? {
+        var url = Bundle.main.bundleURL
+        for _ in 0..<15 {
+            let testPath = url.appendingPathComponent("pyproject.toml")
+            if FileManager.default.fileExists(atPath: testPath.path) {
+                return url.path
+            }
+            url.deleteLastPathComponent()
+        }
+        return nil
     }
 }
