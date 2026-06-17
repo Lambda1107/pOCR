@@ -16,6 +16,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, HotKeyDelegate {
     var statusBarController: StatusBarController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        registerDefaults()
         statusBarController = StatusBarController()
 
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
@@ -23,6 +24,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, HotKeyDelegate {
         HotKeyManager.shared.delegate = self
 
         loadHotKey()
+    }
+
+    private func registerDefaults() {
+        let defaults: [String: Any] = [
+            "ocr_mode": "local",
+            "api_model": "PaddleOCR-VL-1.6",
+        ]
+        UserDefaults.standard.register(defaults: defaults)
     }
 
     func hotKeyTriggered() {

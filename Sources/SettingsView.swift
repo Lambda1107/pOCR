@@ -16,7 +16,7 @@ struct SettingsView: View {
                 }
         }
         .padding()
-        .frame(width: 500, height: 300)
+        .frame(width: 500, height: 420)
     }
 }
 
@@ -65,6 +65,9 @@ struct LogsView: View {
 }
 
 struct GeneralSettingsView: View {
+    @AppStorage("ocr_mode") private var ocrMode: String = "local"
+    @AppStorage("api_model") private var apiModel: String = "PaddleOCR-VL-1.6"
+
     @AppStorage("HotKey_KeyCode") private var hotKeyKeyCode: Int = 0
     @AppStorage("HotKey_Modifiers") private var hotKeyModifiers: Int = 0
 
@@ -73,18 +76,60 @@ struct GeneralSettingsView: View {
     @State private var launchAtLogin = false
     @State private var launchAtLoginStatus: String = ""
 
+    @State private var apiToken: String = ""
+    @State private var testStatus: String = ""
+    @State private var isTesting: Bool = false
+
+    private let apiModels = ["PaddleOCR-VL-1.6", "PaddleOCR-VL-1.5", "PaddleOCR-VL"]
+
     var body: some View {
         Form {
             Section(header: Text("OCR Engine")) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("PaddleOCR-VL-1.6 (Local)")
-                        .font(.body)
-                    Text("Model: PaddleOCR-VL-1.6-0.9B")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text("Device: CPU")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                Picker("Mode", selection: $ocrMode) {
+                    Text("Local (PaddleOCR-VL-1.6)").tag("local")
+                    Text("Cloud API").tag("api")
+                }
+                .pickerStyle(.radioGroup)
+
+                if ocrMode == "api" {
+                    SecureField("API Token", text: $apiToken)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .onChange(of: apiToken) { newValue in
+                            try? KeychainManager.save(key: "api_token", value: newValue)
+                        }
+
+                    Picker("Model", selection: $apiModel) {
+                        ForEach(apiModels, id: \.self) { model in
+                            Text(model).tag(model)
+                        }
+                    }
+
+                    HStack {
+                        Button(action: testConnection) {
+                            if isTesting {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Text("Test Connection")
+                            }
+                        }
+                        .disabled(isTesting || apiToken.isEmpty)
+
+                        if !testStatus.isEmpty {
+                            Text(testStatus)
+                                .font(.caption)
+                                .foregroundColor(testStatus.contains("Success") ? .green : .red)
+                                .lineLimit(2)
+                        }
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("PaddleOCR-VL-1.6 (Local)")
+                            .font(.body)
+                        Text("Model: PaddleOCR-VL-1.6-0.9B · Device: CPU")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                 }
             }
 
@@ -145,6 +190,7 @@ struct GeneralSettingsView: View {
             .onAppear {
                 NSApp.activate(ignoringOtherApps: true)
                 launchAtLogin = SMAppService.mainApp.status == .enabled
+                apiToken = KeychainManager.load(key: "api_token") ?? ""
                 updateDisplayString()
             }
 
@@ -162,6 +208,23 @@ struct GeneralSettingsView: View {
             updateDisplayString()
             updateHotKey()
         }))
+    }
+
+    private func testConnection() {
+        isTesting = true
+        testStatus = "Testing..."
+        Logger.shared.log("Testing API connection...")
+
+        OCRService.shared.testAPIConnection(token: apiToken, model: apiModel) { error in
+            DispatchQueue.main.async {
+                isTesting = false
+                if let error = error {
+                    testStatus = "Failed: \(error)"
+                } else {
+                    testStatus = "Success!"
+                }
+            }
+        }
     }
 
     private func updateDisplayString() {

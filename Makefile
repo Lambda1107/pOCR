@@ -4,7 +4,7 @@ APP_BUNDLE = $(BUILD_DIR)/$(APP_NAME).app
 CONTENTS_DIR = $(APP_BUNDLE)/Contents
 MACOS_DIR = $(CONTENTS_DIR)/MacOS
 RESOURCES_DIR = $(CONTENTS_DIR)/Resources
-SOURCES = Sources/pOCRApp.swift Sources/OCRService.swift Sources/SettingsView.swift Sources/HotKeyManager.swift Sources/StatusBarController.swift Sources/Logger.swift
+SOURCES = Sources/pOCRApp.swift Sources/OCRService.swift Sources/SettingsView.swift Sources/HotKeyManager.swift Sources/StatusBarController.swift Sources/Logger.swift Sources/KeychainManager.swift
 
 .PHONY: all clean run package
 
@@ -16,7 +16,7 @@ $(APP_BUNDLE): $(SOURCES) AppIcon.icns
 	@mkdir -p $(RESOURCES_DIR)
 
 	# Compile Swift sources
-	swiftc $(SOURCES) -o $(MACOS_DIR)/$(APP_NAME) -target arm64-apple-macosx13.0 -framework ServiceManagement
+	swiftc $(SOURCES) -o $(MACOS_DIR)/$(APP_NAME) -target arm64-apple-macosx13.0 -framework ServiceManagement -framework Security
 
 	# Copy Icon
 	cp AppIcon.icns $(RESOURCES_DIR)/AppIcon.icns
