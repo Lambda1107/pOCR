@@ -23,14 +23,12 @@
 
 ## 快速开始（从 Release 下载使用）
 
-1. 进入本项目的 **Releases** 页面，下载最新的 `pOCR.app.zip`
-   （或 `pOCR.app.tar.gz`）。
-2. 解压：双击归档文件，或在终端执行
-   ```bash
-   unzip ~/Downloads/pOCR.app.zip -d ~/Applications
-   ```
-3. 将 `pOCR.app` 拖到 `/Applications`（或 `~/Applications`），按你的习惯放置。
-4. 首次启动。本应用**未经过 Apple 开发者代码签名**，macOS 会拦截它。
+1. 进入本项目的 **Releases** 页面，下载最新的 `pOCR.dmg`。
+2. 双击 `.dmg` 挂载。
+3. 将 DMG 窗口中的 **pOCR** 应用拖到 **Applications** 文件夹别名上
+   （这会把它复制到 `/Applications`）。
+4. 推出已挂载的 `pOCR` 卷。
+5. 首次启动。本应用**未经过 Apple 开发者代码签名**，macOS 会拦截它。
    使用以下任一方式打开：
    - **右键**（或按住 `Control` 点击）`pOCR.app` → **打开** → 在弹窗中再次
      点击 **打开**。这种"Gatekeeper 放行"会被记住，之后双击即可启动。
@@ -43,15 +41,10 @@
 真的损坏——浏览器下载的未签名应用常会出现。移除隔离属性即可：
 
 ```bash
-xattr -cr /path/to/pOCR.app
+xattr -cr /Applications/pOCR.app
 ```
 
 （`-c` 清除所有扩展属性，`-r` 递归处理整个 bundle。）之后再双击启动。
-如果装在 `/Applications`：
-
-```bash
-xattr -cr /Applications/pOCR.app
-```
 
 如果仍然打不开，再显式删除 quarantine 标记：
 
