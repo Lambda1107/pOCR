@@ -45,7 +45,7 @@ $(APP_BUNDLE): $(SOURCES) AppIcon.icns
 	@echo '    <key>CFBundleName</key>' >> $(CONTENTS_DIR)/Info.plist
 	@echo '    <string>$(APP_NAME)</string>' >> $(CONTENTS_DIR)/Info.plist
 	@echo '    <key>CFBundleShortVersionString</key>' >> $(CONTENTS_DIR)/Info.plist
-	@echo '    <string>1.0</string>' >> $(CONTENTS_DIR)/Info.plist
+	@echo '    <string>1.1</string>' >> $(CONTENTS_DIR)/Info.plist
 	@echo '    <key>CFBundleVersion</key>' >> $(CONTENTS_DIR)/Info.plist
 	@echo '    <string>1</string>' >> $(CONTENTS_DIR)/Info.plist
 	@echo '    <key>LSUIElement</key>' >> $(CONTENTS_DIR)/Info.plist

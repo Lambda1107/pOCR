@@ -32,6 +32,10 @@ class OCRService: ObservableObject {
     private let ocrLocalScript: URL
     private let ocrApiScript: URL
 
+    static let defaultLLMSystemPrompt = "Extract all text from the provided image accurately and faithfully, preserving the original layout, reading order, and structure. Output the result as Markdown-formatted text only — use Markdown for headings, lists, tables, code blocks, and emphasis where appropriate, and add no explanations or commentary."
+    static let defaultKimiSystemPrompt = "Extract all text from the provided image accurately and faithfully, preserving the original layout, reading order, and structure. Output the result as Markdown-formatted text only — use Markdown for headings, lists, tables, code blocks, and emphasis where appropriate, and add no explanations or commentary."
+    private let ocrUserInstruction = "Extract all text from this image and return it as Markdown."
+
     private init() {
         let home = FileManager.default.homeDirectoryForCurrentUser
         pocrDir = home.appendingPathComponent(".pocr")
@@ -77,6 +81,10 @@ class OCRService: ObservableObject {
             performOCRApi(imageURL: imageURL, tempDir: tempDir, completion: completion)
         } else if mode == "siliconflow" {
             performOCRSiliconFlow(imageURL: imageURL, tempDir: tempDir, completion: completion)
+        } else if mode == "llm" {
+            performOCRLLM(imageURL: imageURL, tempDir: tempDir, completion: completion)
+        } else if mode == "kimi" {
+            performOCRKimi(imageURL: imageURL, tempDir: tempDir, completion: completion)
         } else {
             performLocalOCR(imageURL: imageURL, tempDir: tempDir, completion: completion)
         }
@@ -643,6 +651,370 @@ class OCRService: ObservableObject {
 
             try? FileManager.default.removeItem(at: tempDir)
         }
+    }
+
+    // MARK: - OpenAI Compatible LLM OCR
+
+    private func performOCRLLM(imageURL: URL, tempDir: URL, completion: @escaping (Result<String, OCRError>) -> Void) {
+        guard let token = CredentialsManager.load(key: "llm_token"), !token.isEmpty else {
+            Logger.shared.log("Error: LLM API token not configured")
+            completion(.failure(.ocrError("LLM API token not set. Configure it in Settings.")))
+            return
+        }
+
+        let baseURL = UserDefaults.standard.string(forKey: "llm_base_url") ?? "https://api.openai.com/v1"
+        let model = UserDefaults.standard.string(forKey: "llm_model") ?? "gpt-4o"
+        let headersText = UserDefaults.standard.string(forKey: "llm_headers") ?? ""
+        let systemPrompt = UserDefaults.standard.string(forKey: "llm_system_prompt") ?? OCRService.defaultLLMSystemPrompt
+
+        performChatCompletionOCR(
+            imageURL: imageURL,
+            tempDir: tempDir,
+            baseURL: baseURL,
+            model: model,
+            token: token,
+            headersText: headersText,
+            systemPrompt: systemPrompt,
+            disableThinking: false,
+            tag: "llm",
+            completion: completion
+        )
+    }
+
+    private func performOCRKimi(imageURL: URL, tempDir: URL, completion: @escaping (Result<String, OCRError>) -> Void) {
+        guard let token = CredentialsManager.load(key: "kimi_token"), !token.isEmpty else {
+            Logger.shared.log("Error: Kimi API token not configured")
+            completion(.failure(.ocrError("Kimi API token not set. Configure it in Settings.")))
+            return
+        }
+
+        let model = UserDefaults.standard.string(forKey: "kimi_model") ?? "kimi-k2.6"
+        let systemPrompt = UserDefaults.standard.string(forKey: "kimi_system_prompt") ?? OCRService.defaultKimiSystemPrompt
+        let disableThinking = UserDefaults.standard.object(forKey: "kimi_disable_thinking") as? Bool ?? true
+
+        performChatCompletionOCR(
+            imageURL: imageURL,
+            tempDir: tempDir,
+            baseURL: "https://api.moonshot.ai/v1",
+            model: model,
+            token: token,
+            headersText: "",
+            systemPrompt: systemPrompt,
+            disableThinking: disableThinking,
+            tag: "kimi",
+            completion: completion
+        )
+    }
+
+    /// Shared OpenAI-compatible chat-completions OCR engine. Used by both the
+    /// generic LLM mode (configurable base URL / headers) and the Kimi mode
+    /// (preset Moonshot endpoint). Sends the image as a vision `image_url`
+    /// content part together with a system prompt and a short user instruction.
+    private func performChatCompletionOCR(
+        imageURL: URL,
+        tempDir: URL,
+        baseURL: String,
+        model: String,
+        token: String,
+        headersText: String,
+        systemPrompt: String,
+        disableThinking: Bool,
+        tag: String,
+        completion: @escaping (Result<String, OCRError>) -> Void
+    ) {
+        guard let imageData = try? Data(contentsOf: imageURL) else {
+            Logger.shared.log("Error: Failed to read image data")
+            completion(.failure(.failedToConvertImage))
+            return
+        }
+
+        let base64Image = imageData.base64EncodedString()
+        let dataURI = "data:image/png;base64,\(base64Image)"
+
+        guard let request = buildChatCompletionRequest(
+            baseURL: baseURL,
+            model: model,
+            token: token,
+            headersText: headersText,
+            systemPrompt: systemPrompt,
+            disableThinking: disableThinking,
+            dataURI: dataURI
+        ) else {
+            Logger.shared.log("Error: Invalid base URL for \(tag)")
+            completion(.failure(.ocrError("Invalid API base URL")))
+            return
+        }
+
+        self.isProcessing = true
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            defer {
+                DispatchQueue.main.async { self.isProcessing = false }
+            }
+
+            Logger.shared.log("Sending request to \(tag) API (model: \(model))...")
+
+            let semaphore = DispatchSemaphore(value: 0)
+            var responseData: Data?
+            var responseError: Error?
+
+            let task = URLSession.shared.dataTask(with: request) { data, _, error in
+                responseData = data
+                responseError = error
+                semaphore.signal()
+            }
+            task.resume()
+            semaphore.wait()
+
+            if let error = responseError {
+                Logger.shared.log("\(tag) API error: \(error.localizedDescription)")
+                completion(.failure(.ocrError(error.localizedDescription)))
+                return
+            }
+
+            guard let data = responseData else {
+                Logger.shared.log("Error: No response from \(tag) API")
+                completion(.failure(.invalidResponse))
+                return
+            }
+
+            let content = self.parseChatCompletionContent(data: data, tag: tag)
+            switch content {
+            case .success(let text):
+                Logger.shared.log("\(tag) OCR Success. Chars: \(text.count)")
+                DispatchQueue.main.async {
+                    let pasteboard = NSPasteboard.general
+                    pasteboard.clearContents()
+                    pasteboard.setString(text, forType: .string)
+                    self.lastResult = text
+                }
+                completion(.success(text))
+            case .failure(let err):
+                completion(.failure(err))
+            }
+
+            try? FileManager.default.removeItem(at: tempDir)
+        }
+    }
+
+    func testLLMConnection(baseURL: String, model: String, token: String, headersText: String, systemPrompt: String, completion: @escaping (String?) -> Void) {
+        testChatCompletionConnection(
+            baseURL: baseURL, model: model, token: token,
+            headersText: headersText, systemPrompt: systemPrompt,
+            disableThinking: false,
+            tag: "llm", completion: completion
+        )
+    }
+
+    func testKimiConnection(token: String, model: String, systemPrompt: String, disableThinking: Bool, completion: @escaping (String?) -> Void) {
+        testChatCompletionConnection(
+            baseURL: "https://api.moonshot.ai/v1", model: model, token: token,
+            headersText: "", systemPrompt: systemPrompt,
+            disableThinking: disableThinking,
+            tag: "kimi", completion: completion
+        )
+    }
+
+    private func testChatCompletionConnection(
+        baseURL: String,
+        model: String,
+        token: String,
+        headersText: String,
+        systemPrompt: String,
+        disableThinking: Bool,
+        tag: String,
+        completion: @escaping (String?) -> Void
+    ) {
+        Logger.shared.log("Testing \(tag) connection with model: \(model)")
+
+        let testImage = createTestImage()
+        guard let tiffData = testImage.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiffData),
+              let pngData = bitmap.representation(using: .png, properties: [:]) else {
+            completion("Failed to create test image")
+            return
+        }
+        let dataURI = "data:image/png;base64,\(pngData.base64EncodedString())"
+
+        guard var request = buildChatCompletionRequest(
+            baseURL: baseURL, model: model, token: token,
+            headersText: headersText, systemPrompt: systemPrompt,
+            disableThinking: disableThinking,
+            dataURI: dataURI
+        ) else {
+            completion("Invalid API base URL")
+            return
+        }
+        request.timeoutInterval = 30
+
+        let task = URLSession.shared.dataTask(with: request) { data, response, error in
+            if let error = error {
+                completion(error.localizedDescription)
+                return
+            }
+            guard let httpResponse = response as? HTTPURLResponse else {
+                completion("Invalid response")
+                return
+            }
+            guard httpResponse.statusCode == 200 else {
+                var msg = "HTTP \(httpResponse.statusCode)"
+                if let data = data, let str = String(data: data, encoding: .utf8) {
+                    msg += ": \(str.prefix(200))"
+                }
+                completion(msg)
+                return
+            }
+            guard let data = data else {
+                completion("Empty response")
+                return
+            }
+
+            switch self.parseChatCompletionContent(data: data, tag: tag) {
+            case .success:
+                Logger.shared.log("\(tag) connection test successful")
+                completion(nil)
+            case .failure(let err):
+                completion(err.localizedDescription)
+            }
+        }
+        task.resume()
+    }
+
+    // MARK: - Chat completion helpers
+
+    /// Resolves a user-supplied base URL to a full `/chat/completions` endpoint.
+    /// Accepts a bare host, a `.../v1` prefix, or a full endpoint URL.
+    private func resolveChatCompletionsURL(_ base: String) -> String? {
+        var trimmed = base.trimmingCharacters(in: .whitespacesAndNewlines)
+        while trimmed.hasSuffix("/") { trimmed.removeLast() }
+        guard !trimmed.isEmpty else { return nil }
+        if trimmed.hasSuffix("/chat/completions") { return trimmed }
+        if trimmed.hasSuffix("/v1") { return trimmed + "/chat/completions" }
+        return trimmed + "/v1/chat/completions"
+    }
+
+    /// Parses a `Key: Value`-per-line block of custom HTTP headers.
+    private func parseCustomHeaders(_ text: String) -> [String: String] {
+        var result: [String: String] = [:]
+        for line in text.components(separatedBy: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty { continue }
+            guard let idx = trimmed.firstIndex(of: ":") else { continue }
+            let key = String(trimmed[..<idx]).trimmingCharacters(in: .whitespaces)
+            let value = String(trimmed[trimmed.index(after: idx)...]).trimmingCharacters(in: .whitespaces)
+            if !key.isEmpty {
+                result[key] = value
+            }
+        }
+        return result
+    }
+
+    private func buildChatCompletionRequest(
+        baseURL: String,
+        model: String,
+        token: String,
+        headersText: String,
+        systemPrompt: String,
+        disableThinking: Bool,
+        dataURI: String
+    ) -> URLRequest? {
+        guard let endpoint = resolveChatCompletionsURL(baseURL),
+              let url = URL(string: endpoint) else {
+            return nil
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if !token.isEmpty {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        // Custom headers are applied last so they can override the defaults
+        // (e.g. a non-Bearer Authorization scheme).
+        for (key, value) in parseCustomHeaders(headersText) {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+        request.timeoutInterval = 120
+
+        var messages: [[String: Any]] = []
+        let trimmedSystem = systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedSystem.isEmpty {
+            messages.append(["role": "system", "content": trimmedSystem])
+        }
+        messages.append([
+            "role": "user",
+            "content": [
+                ["type": "image_url", "image_url": ["url": dataURI]],
+                ["type": "text", "text": ocrUserInstruction],
+            ],
+        ])
+
+        var body: [String: Any] = ["model": model, "messages": messages]
+        // Disable the reasoning/thinking pass for Moonshot reasoning models
+        // (e.g. kimi-k2.6). Faster, cheaper, and irrelevant to plain text OCR.
+        // Non-reasoning models silently ignore this field. Only injected when
+        // requested so the generic LLM mode stays OpenAI-compatible.
+        if disableThinking {
+            body["thinking"] = ["type": "disabled"]
+        }
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        return request
+    }
+
+    private enum ContentParseResult {
+        case success(String)
+        case failure(OCRError)
+    }
+
+    /// Extracts the assistant text from an OpenAI-compatible chat-completion
+    /// response. Handles `content` as both a plain string and an array of
+    /// content parts (some providers return the array form).
+    private func parseChatCompletionContent(data: Data, tag: String) -> ContentParseResult {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            Logger.shared.log("Error: Invalid JSON from \(tag) API")
+            if let raw = String(data: data, encoding: .utf8) {
+                Logger.shared.log("Raw response: \(raw.prefix(500))")
+            }
+            return .failure(.invalidResponse)
+        }
+
+        if let errorObj = json["error"] as? [String: Any] {
+            let msg = errorObj["message"] as? String ?? "Unknown error"
+            Logger.shared.log("\(tag) API error: \(msg)")
+            return .failure(.ocrError(msg))
+        }
+        if let code = json["code"] as? Int, code != 0 {
+            let msg = json["message"] as? String ?? "Unknown error"
+            Logger.shared.log("\(tag) API error: \(msg)")
+            return .failure(.ocrError(msg))
+        }
+
+        guard let choices = json["choices"] as? [[String: Any]],
+              let first = choices.first,
+              let message = first["message"] as? [String: Any] else {
+            Logger.shared.log("Error: Unexpected response format from \(tag)")
+            if let raw = String(data: data, encoding: .utf8) {
+                Logger.shared.log("Raw response: \(raw.prefix(500))")
+            }
+            return .failure(.invalidResponse)
+        }
+
+        if let s = message["content"] as? String {
+            return .success(s)
+        }
+        if let parts = message["content"] as? [[String: Any]] {
+            let text = parts.compactMap { $0["text"] as? String }.joined()
+            if !text.isEmpty {
+                return .success(text)
+            }
+        }
+        if let reasoning = message["reasoning_content"] as? String, !reasoning.isEmpty {
+            // Some models put output under reasoning_content; treat as fallback.
+            return .success(reasoning)
+        }
+
+        Logger.shared.log("Error: No text content in \(tag) response")
+        return .failure(.invalidResponse)
     }
 
     // MARK: - Utilities

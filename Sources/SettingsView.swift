@@ -16,7 +16,7 @@ struct SettingsView: View {
                 }
         }
         .padding()
-        .frame(width: 500, height: 480)
+        .frame(width: 560, height: 640)
     }
 }
 
@@ -70,6 +70,15 @@ struct GeneralSettingsView: View {
     @AppStorage("api_model") private var apiModel: String = "PaddleOCR-VL-1.6"
     @AppStorage("siliconflow_model") private var siliconflowModel: String = "deepseek-ai/DeepSeek-OCR"
 
+    @AppStorage("llm_base_url") private var llmBaseURL: String = "https://api.openai.com/v1"
+    @AppStorage("llm_model") private var llmModel: String = "gpt-4o"
+    @AppStorage("llm_headers") private var llmHeaders: String = ""
+    @AppStorage("llm_system_prompt") private var llmSystemPrompt: String = OCRService.defaultLLMSystemPrompt
+
+    @AppStorage("kimi_model") private var kimiModel: String = "kimi-k2.6"
+    @AppStorage("kimi_system_prompt") private var kimiSystemPrompt: String = OCRService.defaultKimiSystemPrompt
+    @AppStorage("kimi_disable_thinking") private var kimiDisableThinking: Bool = true
+
     @AppStorage("local_pipeline_version") private var localPipelineVersion: String = "v1.6"
     @AppStorage("local_use_layout_detection") private var localUseLayoutDetection: Bool = true
     @AppStorage("local_use_chart_recognition") private var localUseChartRecognition: Bool = true
@@ -95,9 +104,17 @@ struct GeneralSettingsView: View {
     @State private var sfTestStatus: String = ""
     @State private var isTestingSF: Bool = false
 
+    @State private var llmToken: String = ""
+    @State private var llmTestStatus: String = ""
+    @State private var isTestingLLM: Bool = false
+
+    @State private var kimiToken: String = ""
+    @State private var kimiTestStatus: String = ""
+    @State private var isTestingKimi: Bool = false
+
     private let apiModels = ["PaddleOCR-VL-1.6", "PaddleOCR-VL-1.5", "PaddleOCR-VL"]
     private let localPipelineVersions = ["v1.6", "v1.5", "v1"]
-    private let siliconflowModels = ["deepseek-ai/DeepSeek-OCR", "deepseek-ai/DeepSeek-V4-Flash", "PaddlePaddle/PaddleOCR-VL-1.5"]
+    private let siliconflowModels = ["deepseek-ai/DeepSeek-OCR", "PaddlePaddle/PaddleOCR-VL-1.5"]
 
     var body: some View {
         Form {
@@ -106,6 +123,8 @@ struct GeneralSettingsView: View {
                     Text("Local (PaddleOCR-VL)").tag("local")
                     Text("Cloud API (PaddleOCR)").tag("api")
                     Text("SiliconFlow API").tag("siliconflow")
+                    Text("OpenAI Compatible API").tag("llm")
+                    Text("Kimi (Moonshot)").tag("kimi")
                 }
                 .pickerStyle(.radioGroup)
 
@@ -172,6 +191,98 @@ struct GeneralSettingsView: View {
                             Text(sfTestStatus)
                                 .font(.caption)
                                 .foregroundColor(sfTestStatus.contains("Success") ? .green : .red)
+                                .lineLimit(2)
+                        }
+                    }
+                } else if ocrMode == "llm" {
+                    SecureField("API Token", text: $llmToken)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .onChange(of: llmToken) { newValue in
+                            CredentialsManager.save(key: "llm_token", value: newValue)
+                        }
+
+                    TextField("Base URL", text: $llmBaseURL, prompt: Text("https://api.openai.com/v1"))
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+
+                    TextField("Model", text: $llmModel, prompt: Text("gpt-4o"))
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Custom Headers (one per line, Key: Value)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        TextEditor(text: $llmHeaders)
+                            .font(.system(.body, design: .monospaced))
+                            .frame(minHeight: 50, maxHeight: 80)
+                            .border(Color.gray.opacity(0.2))
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("System Prompt")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        TextEditor(text: $llmSystemPrompt)
+                            .font(.system(.body, design: .monospaced))
+                            .frame(minHeight: 60, maxHeight: 100)
+                            .border(Color.gray.opacity(0.2))
+                    }
+
+                    HStack {
+                        Button(action: testLLMConnection) {
+                            if isTestingLLM {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Text("Test Connection")
+                            }
+                        }
+                        .disabled(isTestingLLM || llmToken.isEmpty)
+
+                        if !llmTestStatus.isEmpty {
+                            Text(llmTestStatus)
+                                .font(.caption)
+                                .foregroundColor(llmTestStatus.contains("Success") ? .green : .red)
+                                .lineLimit(2)
+                        }
+                    }
+                } else if ocrMode == "kimi" {
+                    SecureField("API Token", text: $kimiToken)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .onChange(of: kimiToken) { newValue in
+                            CredentialsManager.save(key: "kimi_token", value: newValue)
+                        }
+
+                    TextField("Model", text: $kimiModel, prompt: Text("kimi-k2.6"))
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+
+                    Toggle("Disable Thinking", isOn: $kimiDisableThinking)
+                        .help("Turn off the reasoning pass for kimi-k2.x models (faster, cheaper). Non-reasoning models ignore this.")
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("System Prompt")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        TextEditor(text: $kimiSystemPrompt)
+                            .font(.system(.body, design: .monospaced))
+                            .frame(minHeight: 60, maxHeight: 100)
+                            .border(Color.gray.opacity(0.2))
+                    }
+
+                    HStack {
+                        Button(action: testKimiConnection) {
+                            if isTestingKimi {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Text("Test Connection")
+                            }
+                        }
+                        .disabled(isTestingKimi || kimiToken.isEmpty)
+
+                        if !kimiTestStatus.isEmpty {
+                            Text(kimiTestStatus)
+                                .font(.caption)
+                                .foregroundColor(kimiTestStatus.contains("Success") ? .green : .red)
                                 .lineLimit(2)
                         }
                     }
@@ -253,6 +364,8 @@ struct GeneralSettingsView: View {
                 launchAtLogin = SMAppService.mainApp.status == .enabled
                 apiToken = CredentialsManager.load(key: "api_token") ?? ""
                 siliconflowToken = CredentialsManager.load(key: "siliconflow_token") ?? ""
+                llmToken = CredentialsManager.load(key: "llm_token") ?? ""
+                kimiToken = CredentialsManager.load(key: "kimi_token") ?? ""
                 updateDisplayString()
             }
 
@@ -301,6 +414,51 @@ struct GeneralSettingsView: View {
                     sfTestStatus = "Failed: \(error)"
                 } else {
                     sfTestStatus = "Success!"
+                }
+            }
+        }
+    }
+
+    private func testLLMConnection() {
+        isTestingLLM = true
+        llmTestStatus = "Testing..."
+        Logger.shared.log("Testing OpenAI-compatible LLM connection...")
+
+        OCRService.shared.testLLMConnection(
+            baseURL: llmBaseURL,
+            model: llmModel,
+            token: llmToken,
+            headersText: llmHeaders,
+            systemPrompt: llmSystemPrompt
+        ) { error in
+            DispatchQueue.main.async {
+                isTestingLLM = false
+                if let error = error {
+                    llmTestStatus = "Failed: \(error)"
+                } else {
+                    llmTestStatus = "Success!"
+                }
+            }
+        }
+    }
+
+    private func testKimiConnection() {
+        isTestingKimi = true
+        kimiTestStatus = "Testing..."
+        Logger.shared.log("Testing Kimi connection...")
+
+        OCRService.shared.testKimiConnection(
+            token: kimiToken,
+            model: kimiModel,
+            systemPrompt: kimiSystemPrompt,
+            disableThinking: kimiDisableThinking
+        ) { error in
+            DispatchQueue.main.async {
+                isTestingKimi = false
+                if let error = error {
+                    kimiTestStatus = "Failed: \(error)"
+                } else {
+                    kimiTestStatus = "Success!"
                 }
             }
         }
