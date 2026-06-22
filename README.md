@@ -1,5 +1,7 @@
 # pOCR
 
+[中文文档](README.zh.md)
+
 Native macOS menu bar OCR app. Run OCR entirely on-device with **PaddleOCR-VL**,
 or send images to a cloud endpoint — the PaddleOCR cloud API, SiliconFlow,
 any **OpenAI-compatible** model, or **Kimi (Moonshot)**.
@@ -19,6 +21,46 @@ any **OpenAI-compatible** model, or **Kimi (Moonshot)**.
     reasoning/thinking disabled by default for fast plain-text OCR
 - **Configurable system prompts** for the LLM and Kimi modes
 - **Global Shortcut:** Configurable hotkey (default: `Cmd+Shift+A`)
+
+## Quick Start (from a Release download)
+
+1. Go to the project's **Releases** page and download the latest `pOCR.app.zip`
+   (or `pOCR.app.tar.gz`).
+2. Unzip it: double-click the archive, or in Terminal
+   ```bash
+   unzip ~/Downloads/pOCR.app.zip -d ~/Applications
+   ```
+3. Move `pOCR.app` to `/Applications` (or `~/Applications`) — wherever you prefer.
+4. First launch. The app is **not Apple Developer code-signed**, so macOS will
+   block it. Open it with one of these methods:
+   - **Right-click** (or `Control`-click) `pOCR.app` → **Open** → in the dialog
+     click **Open** again. This "Gatekeeper approval" persists, so subsequent
+     launches work by double-clicking.
+   - Or, in **System Settings → Privacy & Security**, scroll to the blocked
+     "pOCR" message and click **Open Anyway**.
+
+### "App is damaged and can't be opened" / "file broken"
+
+This error is almost always the Gatekeeper quarantine flag, not real damage —
+it shows up for unsigned apps downloaded via a browser. Remove the quarantine
+attribute:
+
+```bash
+xattr -cr /path/to/pOCR.app
+```
+
+(`-c` clears all extended attributes, `-r` recurses into the bundle.) After
+this, double-click to launch. If you installed it in `/Applications`:
+
+```bash
+xattr -cr /Applications/pOCR.app
+```
+
+If it still won't open, also strip the quarantine bit explicitly:
+
+```bash
+xattr -d com.apple.quarantine /Applications/pOCR.app
+```
 
 ## Requirements
 
