@@ -34,7 +34,7 @@ class OCRService: ObservableObject {
 
     static let defaultLLMSystemPrompt = "Extract all text from the provided image accurately and faithfully, preserving the original layout, reading order, and structure. Output the result as Markdown-formatted text only — use Markdown for headings, lists, tables, code blocks, and emphasis where appropriate, and add no explanations or commentary."
     static let defaultKimiSystemPrompt = "Extract all text from the provided image accurately and faithfully, preserving the original layout, reading order, and structure. Output the result as Markdown-formatted text only — use Markdown for headings, lists, tables, code blocks, and emphasis where appropriate, and add no explanations or commentary."
-    private let ocrUserInstruction = "Extract all text from this image and return it as Markdown."
+    static let defaultUserPrompt = "Extract all text from this image and return it as Markdown."
 
     private init() {
         let home = FileManager.default.homeDirectoryForCurrentUser
@@ -941,11 +941,12 @@ class OCRService: ObservableObject {
         if !trimmedSystem.isEmpty {
             messages.append(["role": "system", "content": trimmedSystem])
         }
+        let userPrompt = UserDefaults.standard.string(forKey: "user_prompt") ?? OCRService.defaultUserPrompt
         messages.append([
             "role": "user",
             "content": [
                 ["type": "image_url", "image_url": ["url": dataURI]],
-                ["type": "text", "text": ocrUserInstruction],
+                ["type": "text", "text": userPrompt],
             ],
         ])
 
@@ -958,6 +959,30 @@ class OCRService: ObservableObject {
             body["thinking"] = ["type": "disabled"]
         }
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        // Log the request body (truncate the image data URI to avoid bloat)
+        if let bodyData = request.httpBody,
+           var bodyJSON = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any] {
+            var loggable = bodyJSON
+            if var msgs = loggable["messages"] as? [[String: Any]] {
+                for i in msgs.indices {
+                    if var content = msgs[i]["content"] as? [[String: Any]] {
+                        for j in content.indices {
+                            if content[j]["type"] as? String == "image_url" {
+                                content[j]["image_url"] = ["url": "<base64-image-truncated>"]
+                            }
+                        }
+                        msgs[i]["content"] = content
+                    }
+                }
+                loggable["messages"] = msgs
+            }
+            if let pretty = try? JSONSerialization.data(withJSONObject: loggable, options: [.prettyPrinted, .sortedKeys]),
+               let str = String(data: pretty, encoding: .utf8) {
+                Logger.shared.log("[request body]\n\(str)")
+            }
+        }
+
         return request
     }
 

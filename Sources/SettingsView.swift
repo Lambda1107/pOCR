@@ -77,6 +77,7 @@ struct GeneralSettingsView: View {
 
     @AppStorage("kimi_model") private var kimiModel: String = "kimi-k2.6"
     @AppStorage("kimi_system_prompt") private var kimiSystemPrompt: String = OCRService.defaultKimiSystemPrompt
+    @AppStorage("user_prompt") private var userPrompt: String = OCRService.defaultUserPrompt
     @AppStorage("kimi_disable_thinking") private var kimiDisableThinking: Bool = true
 
     @AppStorage("local_pipeline_version") private var localPipelineVersion: String = "v1.6"
@@ -227,6 +228,16 @@ struct GeneralSettingsView: View {
                             .border(Color.gray.opacity(0.2))
                     }
 
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("User Prompt")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        TextEditor(text: $userPrompt)
+                            .font(.system(.body, design: .monospaced))
+                            .frame(minHeight: 50, maxHeight: 80)
+                            .border(Color.gray.opacity(0.2))
+                    }
+
                     HStack {
                         Button(action: testLLMConnection) {
                             if isTestingLLM {
@@ -265,6 +276,16 @@ struct GeneralSettingsView: View {
                         TextEditor(text: $kimiSystemPrompt)
                             .font(.system(.body, design: .monospaced))
                             .frame(minHeight: 60, maxHeight: 100)
+                            .border(Color.gray.opacity(0.2))
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("User Prompt")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        TextEditor(text: $userPrompt)
+                            .font(.system(.body, design: .monospaced))
+                            .frame(minHeight: 50, maxHeight: 80)
                             .border(Color.gray.opacity(0.2))
                     }
 

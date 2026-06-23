@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.2.0] - 2026-06-23
+
+### Added
+- **Configurable User Prompt** for both LLM and Kimi modes (System Prompt +
+  User Prompt are now both editable in Settings).
+
 ## [1.1.0] - 2026-06-22
 
 ### Added
